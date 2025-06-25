@@ -1,0 +1,657 @@
+---
+- name: Configuração completa do servidor Ubuntu 24.04 LTS
+  hosts: all
+  become: yes
+  vars:
+    # As variáveis são definidas no arquivo inventory.ini
+    
+  tasks:
+    # ================================
+    # CONFIGURAÇÕES DE SEGURANÇA
+    # ================================
+    
+    - name: Atualizar cache do apt
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+    
+    - name: Atualizar todos os pacotes
+      apt:
+        upgrade: dist
+        autoremove: yes
+        autoclean: yes
+    
+    - name: Instalar pacotes essenciais de segurança
+      apt:
+        name:
+          - ufw
+          - fail2ban
+          - unattended-upgrades
+          - apt-listchanges
+          - logwatch
+          - rkhunter
+          - chkrootkit
+          - lynis
+          - aide
+          - auditd
+          - psad
+          - clamav
+          - clamav-daemon
+          - htop
+          - curl
+          - wget
+          - git
+          - vim
+          - rsync
+          - ca-certificates
+          - gnupg
+          - lsb-release
+        state: present
+    
+    - name: Configurar atualizações automáticas de segurança
+      copy:
+        dest: /etc/apt/apt.conf.d/20auto-upgrades
+        content: |
+          APT::Periodic::Update-Package-Lists "1";
+          APT::Periodic::Download-Upgradeable-Packages "1";
+          APT::Periodic::AutocleanInterval "7";
+          APT::Periodic::Unattended-Upgrade "1";
+    
+    - name: Configurar unattended-upgrades para apenas atualizações de segurança
+      copy:
+        dest: /etc/apt/apt.conf.d/50unattended-upgrades
+        content: |
+          Unattended-Upgrade::Allowed-Origins {
+              "${distro_id}:${distro_codename}-security";
+              "${distro_id} ESMApps:${distro_codename}-apps-security";
+              "${distro_id} ESM:${distro_codename}-infra-security";
+          };
+          Unattended-Upgrade::Remove-Unused-Dependencies "true";
+          Unattended-Upgrade::Automatic-Reboot "false";
+          Unattended-Upgrade::Mail "root";
+    
+    # Configuração do Firewall UFW
+    - name: Resetar configurações do UFW
+      ufw:
+        state: reset
+    
+    - name: Configurar política padrão do UFW (deny incoming)
+      ufw:
+        direction: incoming
+        policy: deny
+    
+    - name: Configurar política padrão do UFW (allow outgoing)
+      ufw:
+        direction: outgoing
+        policy: allow
+    
+    - name: Permitir SSH na porta 22
+      ufw:
+        rule: allow
+        port: '22'
+        proto: tcp
+    
+    - name: Permitir HTTP (porta 80)
+      ufw:
+        rule: allow
+        port: '80'
+        proto: tcp
+    
+    - name: Permitir HTTPS (porta 443)
+      ufw:
+        rule: allow
+        port: '443'
+        proto: tcp
+    
+    - name: Permitir Docker Swarm (porta 2377)
+      ufw:
+        rule: allow
+        port: '2377'
+        proto: tcp
+    
+    - name: Permitir Docker Swarm comunicação entre nós (porta 7946)
+      ufw:
+        rule: allow
+        port: '7946'
+    
+    - name: Permitir Docker Swarm overlay network (porta 4789)
+      ufw:
+        rule: allow
+        port: '4789'
+        proto: udp
+    
+    - name: Ativar UFW
+      ufw:
+        state: enabled
+        logging: 'on'
+    
+    # Configuração do Fail2Ban
+    - name: Configurar Fail2Ban para SSH
+      copy:
+        dest: /etc/fail2ban/jail.local
+        content: |
+          [DEFAULT]
+          bantime = {{ fail2ban_bantime }}
+          findtime = 600
+          maxretry = {{ fail2ban_maxretry }}
+          backend = systemd
+          
+          [sshd]
+          enabled = true
+          port = ssh
+          filter = sshd
+          logpath = /var/log/auth.log
+          maxretry = {{ fail2ban_maxretry }}
+          bantime = {{ fail2ban_bantime }}
+    
+    - name: Iniciar e habilitar Fail2Ban
+      systemd:
+        name: fail2ban
+        state: started
+        enabled: yes
+    
+    # Configurações de kernel e sistema
+    - name: Configurar parâmetros de segurança do kernel
+      sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        state: present
+        reload: yes
+      loop:
+        - { name: 'net.ipv4.ip_forward', value: '1' }
+        - { name: 'net.ipv4.conf.all.rp_filter', value: '1' }
+        - { name: 'net.ipv4.conf.default.rp_filter', value: '1' }
+        - { name: 'net.ipv4.icmp_echo_ignore_broadcasts', value: '1' }
+        - { name: 'net.ipv4.icmp_ignore_bogus_error_responses', value: '1' }
+        - { name: 'net.ipv4.conf.all.accept_redirects', value: '0' }
+        - { name: 'net.ipv4.conf.default.accept_redirects', value: '0' }
+        - { name: 'net.ipv4.conf.all.secure_redirects', value: '0' }
+        - { name: 'net.ipv4.conf.default.secure_redirects', value: '0' }
+        - { name: 'net.ipv4.conf.all.accept_source_route', value: '0' }
+        - { name: 'net.ipv4.conf.default.accept_source_route', value: '0' }
+        - { name: 'net.ipv4.tcp_syncookies', value: '1' }
+        - { name: 'net.ipv4.tcp_max_syn_backlog', value: '2048' }
+        - { name: 'net.ipv4.tcp_synack_retries', value: '2' }
+        - { name: 'net.ipv4.tcp_syn_retries', value: '5' }
+        - { name: 'kernel.dmesg_restrict', value: '1' }
+        - { name: 'kernel.kptr_restrict', value: '2' }
+        - { name: 'kernel.yama.ptrace_scope', value: '1' }
+    
+    # Configurar limites de sistema
+    - name: Configurar limites de sistema
+      copy:
+        dest: /etc/security/limits.conf
+        content: |
+          # Limites de segurança
+          * soft nofile 65536
+          * hard nofile 65536
+          * soft nproc 32768
+          * hard nproc 32768
+          root soft nofile 65536
+          root hard nofile 65536
+          root soft nproc 32768
+          root hard nproc 32768
+    
+    # Configurar SSH (mantendo login por senha)
+    - name: Configurar SSH com segurança mantendo senha
+      copy:
+        dest: /etc/ssh/sshd_config
+        backup: yes
+        content: |
+          # Configuração SSH segura
+          Protocol 2
+          PermitRootLogin no
+          MaxAuthTries 3
+          MaxSessions 2
+          LoginGraceTime 60
+          PasswordAuthentication yes
+          PermitEmptyPasswords no
+          ChallengeResponseAuthentication no
+          UsePAM yes
+          X11Forwarding no
+          PrintMotd no
+          PrintLastLog yes
+          TCPKeepAlive yes
+          Compression delayed
+          ClientAliveInterval 300
+          ClientAliveCountMax 2
+          AllowUsers {{ deploy_user }}
+          Banner /etc/issue.net
+      notify: restart ssh
+    
+    - name: Criar banner de login
+      copy:
+        dest: /etc/issue.net
+        content: |
+          ******************************************************************
+          *                     ACESSO AUTORIZADO APENAS                  *
+          *                                                                *
+          *     Este sistema é monitorado. Todas as atividades são        *
+          *     registradas e podem ser usadas como evidência.            *
+          *                                                                *
+          *     Usuários não autorizados serão processados.               *
+          ******************************************************************
+    
+    # Configurar auditoria
+    - name: Configurar auditd
+      copy:
+        dest: /etc/audit/rules.d/audit.rules
+        content: |
+          # Monitorar arquivos importantes
+          -w /etc/passwd -p wa -k passwd_changes
+          -w /etc/group -p wa -k group_changes
+          -w /etc/shadow -p wa -k shadow_changes
+          -w /etc/sudoers -p wa -k sudoers_changes
+          -w /var/log/auth.log -p wa -k auth_log_changes
+          -w /etc/ssh/sshd_config -p wa -k sshd_config_changes
+          
+          # Monitorar tentativas de login
+          -w /var/log/faillog -p wa -k login_failures
+          -w /var/log/lastlog -p wa -k last_login
+    
+    - name: Iniciar e habilitar auditd
+      systemd:
+        name: auditd
+        state: started
+        enabled: yes
+    
+    # ================================
+    # INSTALAÇÃO DO DOCKER
+    # ================================
+    
+    - name: Remover versões antigas do Docker
+      apt:
+        name:
+          - docker
+          - docker-engine
+          - docker.io
+          - containerd
+          - runc
+        state: absent
+    
+    - name: Criar diretório para chaves GPG
+      file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: '0755'
+    
+    - name: Adicionar chave GPG oficial do Docker
+      apt_key:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        keyring: /etc/apt/keyrings/docker.gpg
+        state: present
+    
+    - name: Adicionar repositório do Docker
+      apt_repository:
+        repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        state: present
+        update_cache: yes
+    
+    - name: Instalar Docker Engine
+      apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-compose-plugin
+        state: present
+        update_cache: yes
+    
+    - name: Adicionar usuário deploy ao grupo docker
+      user:
+        name: "{{ deploy_user }}"
+        groups: docker
+        append: yes
+    
+    - name: Configurar Docker daemon
+      copy:
+        dest: /etc/docker/daemon.json
+        content: |
+          {
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "10m",
+              "max-file": "3"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: restart docker
+    
+    - name: Iniciar e habilitar Docker
+      systemd:
+        name: docker
+        state: started
+        enabled: yes
+    
+    # ================================
+    # INICIALIZAR DOCKER SWARM
+    # ================================
+    
+    - name: Verificar se Swarm já está inicializado
+      command: docker info --format '{{ "{{" }}.Swarm.LocalNodeState{{ "}}" }}'
+      register: swarm_status
+      changed_when: false
+      become_user: "{{ deploy_user }}"
+    
+    - name: Inicializar Docker Swarm
+      command: docker swarm init
+      become_user: "{{ deploy_user }}"
+      when: swarm_status.stdout != "active"
+    
+    - name: Aguardar inicialização do Swarm
+      pause:
+        seconds: 10
+      when: swarm_status.stdout != "active"
+
+    - name: Criar rede overlay para Traefik
+      command: docker network create --driver overlay --attachable traefik-public
+      become_user: "{{ deploy_user }}"
+      ignore_errors: yes
+    
+    # ================================
+    # INSTALAR TRAEFIK
+    # ================================
+    
+    - name: Criar diretório para Traefik
+      file:
+        path: /opt/traefik
+        state: directory
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: '0755'
+
+    - name: Criar diretório para certificados ACME
+      file:
+        path: /opt/traefik/acme
+        state: directory
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: '0755'
+
+    - name: Criar arquivo acme.json com permissões corretas
+      file:
+        path: /opt/traefik/acme/acme.json
+        state: touch
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: '0600'
+    
+    - name: Criar arquivo de composição do Traefik
+      copy:
+        dest: /opt/traefik/docker-compose.yml
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        content: |
+          version: '3.8'
+          
+          networks:
+            traefik-public:
+              external: true
+
+          services:
+            traefik:
+              image: "traefik:{{ traefik_version }}"
+              ports:
+                - target: 80
+                  published: 80
+                  mode: host
+                - target: 443
+                  published: 443
+                  mode: host
+              volumes:
+                - /var/run/docker.sock:/var/run/docker.sock:ro
+                - /opt/traefik/acme:/etc/traefik/acme
+              networks:
+                - traefik-public
+              command:
+                # API e Dashboard
+                - "--api.dashboard=true"
+                
+                # Providers
+                - "--providers.swarm.exposedByDefault=false"
+                - "--providers.swarm.network=traefik-public"
+                
+                # Entrypoints
+                - "--entrypoints.web.address=:80"
+                - "--entrypoints.websecure.address=:443"
+                
+                # Redirecionamento HTTP para HTTPS
+                - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+                - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+                - "--entrypoints.web.http.redirections.entrypoint.permanent=true"
+                
+                # Let's Encrypt
+                - "--certificatesresolvers.letsencrypt.acme.email={{ letsencrypt_email }}"
+                - "--certificatesresolvers.letsencrypt.acme.storage=/etc/traefik/acme/acme.json"
+                - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+                - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+                
+                # Logs
+                - "--log.level=INFO"
+                - "--accesslog=true"
+              deploy:
+                mode: replicated
+                replicas: 1
+                placement:
+                  constraints:
+                    - node.role == manager
+                labels:
+                  - "traefik.enable=true"
+                  - "traefik.http.routers.dashboard.rule=Host(`{{ traefik_domain }}`)"
+                  - "traefik.http.routers.dashboard.service=api@internal"
+                  - "traefik.http.routers.dashboard.tls=true"
+                  - "traefik.http.routers.dashboard.tls.certresolver=letsencrypt"
+                  - "traefik.http.services.dashboard.loadbalancer.server.port=8080"
+    
+    # ================================
+    # INSTALAR PORTAINER
+    # ================================
+    
+    - name: Criar diretório para Portainer
+      file:
+        path: /opt/portainer
+        state: directory
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        mode: '0755'
+    
+    - name: Criar arquivo de composição do Portainer
+      copy:
+        dest: /opt/portainer/docker-compose.yml
+        owner: "{{ deploy_user }}"
+        group: "{{ deploy_user }}"
+        content: |
+          version: '3.8'
+          
+          networks:
+            traefik-public:
+              external: true
+
+          services:
+            portainer:
+              image: "portainer/portainer-ce:{{ portainer_version }}"
+              volumes:
+                - /var/run/docker.sock:/var/run/docker.sock
+                - portainer_data:/data
+              networks:
+                - traefik-public
+              deploy:
+                mode: replicated
+                replicas: 1
+                placement:
+                  constraints:
+                    - node.role == manager
+                labels:
+                  - "traefik.enable=true"
+                  - "traefik.http.routers.portainer.rule=Host(`{{ portainer_domain }}`)"
+                  - "traefik.http.routers.portainer.service=portainer"
+                  - "traefik.http.routers.portainer.entrypoints=websecure"
+                  - "traefik.http.routers.portainer.tls=true"
+                  - "traefik.http.routers.portainer.tls.certresolver=letsencrypt"
+                  - "traefik.http.services.portainer.loadbalancer.server.port=9000"
+
+          volumes:
+            portainer_data:
+    
+    # ================================
+    # DEPLOY DOS SERVIÇOS
+    # ================================
+
+    - name: Deploy Traefik no Swarm
+      command: docker stack deploy -c docker-compose.yml traefik
+      args:
+        chdir: /opt/traefik
+      become_user: "{{ deploy_user }}"
+
+    - name: Aguardar Traefik estar pronto
+      pause:
+        seconds: 30
+
+    - name: Deploy Portainer no Swarm
+      command: docker stack deploy -c docker-compose.yml portainer
+      args:
+        chdir: /opt/portainer
+      become_user: "{{ deploy_user }}"
+    
+    # ================================
+    # CONFIGURAÇÕES FINAIS
+    # ================================
+    
+    - name: Configurar logrotate para logs do Docker
+      copy:
+        dest: /etc/logrotate.d/docker
+        content: |
+          /var/lib/docker/containers/*/*.log {
+            rotate 7
+            daily
+            compress
+            size=1M
+            missingok
+            delaycompress
+            copytruncate
+          }
+    
+    - name: Criar script de manutenção
+      copy:
+        dest: /usr/local/bin/system-maintenance.sh
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # Script de manutenção do sistema
+          set -e
+          LOG_FILE="/var/log/maintenance.log"
+          
+          echo "### Iniciando manutenção do sistema em $(date) ###" | tee -a $LOG_FILE
+          
+          # Limpeza do APT
+          echo "Limpando cache do APT..." | tee -a $LOG_FILE
+          apt-get autoremove -y | tee -a $LOG_FILE
+          apt-get clean | tee -a $LOG_FILE
+          
+          # Limpeza do Docker
+          echo "Limpando recursos não utilizados do Docker..." | tee -a $LOG_FILE
+          docker system prune -af | tee -a $LOG_FILE
+          
+          echo "### Manutenção concluída em $(date) ###" | tee -a $LOG_FILE
+
+    - name: Criar cron job para manutenção semanal
+      cron:
+        name: "Manutenção semanal do sistema"
+        weekday: "0"
+        hour: "2"
+        minute: "0"
+        job: "/usr/local/bin/system-maintenance.sh > /var/log/maintenance.log 2>&1"
+
+    - name: Configurar AIDE
+      copy:
+        dest: /etc/aide/aide.conf
+        content: |
+          # AIDE configuration file
+          database=file:/var/lib/aide/aide.db
+          database_out=file:/var/lib/aide/aide.db.new
+          gzip_dbout=yes
+          verbose=5
+          report_url=stdout
+          
+          # Rules
+          ALL=R+sha512
+          
+          # Files and directories to monitor
+          /boot ALL
+          /bin ALL
+          /sbin ALL
+          /lib ALL
+          /lib64 ALL
+          /etc ALL
+          /usr/local/bin ALL
+          /usr/local/sbin ALL
+          !/var/log/.*
+          !/var/spool/.*
+      
+    - name: Inicializar AIDE
+      command: aideinit -y -f
+      changed_when: true
+      ignore_errors: yes
+
+    # ================================
+    # VERIFICAÇÕES FINAIS
+    # ================================
+
+    - name: Verificar status do Swarm
+      command: docker node ls
+      become_user: "{{ deploy_user }}"
+      register: swarm_nodes
+
+    - name: Verificar stacks deployados
+      command: docker stack ls
+      become_user: "{{ deploy_user }}"
+      register: docker_stacks
+
+    - name: Exibir informações finais
+      debug:
+        msg: |
+          ====================================================
+          CONFIGURAÇÃO CONCLUÍDA COM SUCESSO!
+          ====================================================
+          
+          Serviços instalados e configurados:
+          - Sistema atualizado e endurecido
+          - Docker Engine com Swarm inicializado
+          - Traefik (acesse via: https://{{ traefik_domain }})
+          - Portainer (acesse via: https://{{ portainer_domain }})
+          
+          Configurações de segurança aplicadas:
+          - UFW configurado
+          - Fail2Ban ativo
+          - Auditoria configurada
+          - Atualizações automáticas de segurança
+          - Parâmetros de kernel otimizados
+          
+          Status do Docker Swarm:
+          {{ swarm_nodes.stdout }}
+          
+          Stacks deployados:
+          {{ docker_stacks.stdout }}
+          
+          Próximos passos:
+          1. Configure seus domínios DNS para apontar para o servidor
+          2. Acesse o Traefik Dashboard em https://{{ traefik_domain }}
+          3. Acesse o Portainer em https://{{ portainer_domain }}
+          4. Monitore logs em /var/log/
+          
+          IMPORTANTE: Aguarde alguns minutos para os certificados SSL
+          serem gerados automaticamente pelo Let's Encrypt.
+          
+          ====================================================
+
+  handlers:
+    - name: restart ssh
+      systemd:
+        name: ssh
+        state: restarted
+    
+    - name: restart docker
+      systemd:
+        name: docker
+        state: restarted
