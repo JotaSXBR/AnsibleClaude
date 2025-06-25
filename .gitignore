@@ -1,0 +1,7 @@
+# Ignorar arquivos de inventário do Ansible que contêm informações sensíveis.
+# O arquivo 'inventory_default.ini' deve ser versionado como um template.
+inventory.ini
+
+# Ignorar arquivos de backup do editor de texto
+*.swo
+*.swp 
