@@ -1,150 +1,90 @@
-# Ansible Playbook: Configuração de Servidor Ubuntu 24.04 LTS
+# Projeto Ansible para Servidor de Produção com Docker Swarm, Traefik e Portainer
 
-Este projeto contém um playbook Ansible projetado para automatizar a configuração e o endurecimento de um servidor Ubuntu 24.04 LTS. O playbook instala e configura um ambiente seguro e pronto para produção com Docker, Docker Swarm, Traefik e Portainer.
+Este repositório contém um playbook Ansible para configurar um servidor Ubuntu 24.04 do zero, transformando-o em um ambiente de produção robusto e seguro, pronto para hospedar aplicações em contêineres.
 
-## 📋 Funcionalidades
+O playbook automatiza a instalação e configuração de Docker, Docker Swarm, Traefik como reverse proxy com SSL automático (Let's Encrypt), e Portainer para gerenciamento de contêineres.
 
-O playbook realiza as seguintes tarefas:
+## Funcionalidades
 
-### 🛡️ Segurança (Hardening)
-- **Atualizações do Sistema**: Atualiza todos os pacotes e configura atualizações automáticas de segurança.
-- **Firewall (UFW)**: Configura o `UFW` para negar todo o tráfego de entrada por padrão, permitindo apenas portas essenciais (SSH, HTTP, HTTPS) e as necessárias para o Docker Swarm.
-- **Fail2Ban**: Instala e configura o `Fail2Ban` para proteger o serviço SSH contra ataques de força bruta.
-- **Segurança do Kernel**: Aplica configurações de segurança ao kernel via `sysctl` para mitigar vários tipos de ataques.
-- **Limites do Sistema**: Aumenta os limites de `nofile` e `nproc` para melhor desempenho de aplicações de alta carga.
-- **Configuração SSH Segura**:
-  - Desabilita o login do usuário `root`.
-  - Limita o número de tentativas de autenticação.
-  - Cria um usuário de `deploy` dedicado com privilégios `sudo`.
-  - Adiciona um banner de aviso no login.
-- **Ferramentas de Segurança**: Instala um conjunto de ferramentas para verificação e monitoramento de segurança (`rkhunter`, `chkrootkit`, `lynis`, `auditd`, `clamav`).
-- **Auditoria**: Configura o `auditd` para monitorar o acesso a arquivos críticos do sistema.
+- **Segurança:** Configura UFW, Fail2Ban, atualizações automáticas de segurança e hardening do kernel.
+- **Docker e Swarm:** Instala o Docker e inicializa um cluster Swarm, deixando o ambiente pronto para deploy de serviços.
+- **Traefik:** Implanta o Traefik v3 como um serviço Swarm para atuar como reverse proxy e load balancer, com integração Let's Encrypt para certificados SSL automáticos.
+- **Portainer:** Implanta o Portainer CE para facilitar o gerenciamento do ambiente Docker via interface web.
+- **Manutenção:** Adiciona um script de limpeza e um cron job para manutenção periódica do sistema.
 
-### 🐳 Docker e Orquestração
-- **Docker**: Instala a versão mais recente do Docker a partir do repositório oficial.
-- **Docker Compose**: Instala o Docker Compose.
-- **Docker Swarm**: Inicializa um cluster Docker Swarm no servidor (modo de nó único).
-- **Traefik**: Implanta o Traefik como um serviço Swarm para atuar como reverse proxy e load balancer, com integração Let's Encrypt para certificados SSL automáticos.
-- **Portainer**: Implanta o Portainer CE como um serviço Swarm para facilitar a gestão do ambiente Docker.
+---
 
-### ⚙️ Manutenção e Usuários
-- **Usuário de Deploy**: Cria um usuário dedicado (`deploy` por padrão) para gerenciar o servidor, adicionando-o aos grupos `sudo` e `docker`.
-- **Manutenção Automatizada**: Configura scripts de manutenção (`logrotate`, limpeza do sistema) que rodam periodicamente via `cron`.
+## ‼️ Intervenção Manual Obrigatória
 
-## 🚀 Pré-requisitos
+Antes de executar o playbook, duas ações manuais são **essenciais**.
 
-### Máquina de Controle (Onde você executa o Ansible)
-- **Ansible**: Certifique-se de ter o Ansible instalado.
-  ```bash
-  sudo apt update
-  sudo apt install ansible
-  ```
-  ou
-  ```bash
-  pip install ansible
-  ```
-- **Git**: Para clonar o repositório.
+### Passo 1: Configurar o Inventário (`inventory.ini`)
 
-### Servidor Remoto (O alvo da configuração)
-- Um servidor com **Ubuntu 24.04 LTS** recém-instalado.
-- Acesso SSH ao servidor com um usuário que tenha privilégios `sudo` (pode ser o `root` para a configuração inicial).
+Abra o arquivo `inventory.ini` e configure **todas** as variáveis a seguir de acordo com o seu ambiente:
 
-## 💡 Como Usar
+- `ansible_host`: O endereço IP do seu servidor.
+- `ansible_user`: O usuário com permissões `sudo` que o Ansible usará para se conectar (ex: `root` ou outro usuário).
+- `deploy_user`: O nome do usuário de deploy que será criado (ex: `deploy`).
+- `fail2ban_bantime`: Tempo de banimento do Fail2Ban (ex: `1h` para 1 hora).
+- `fail2ban_maxretry`: Número de tentativas de login antes do banimento.
+- `traefik_version`: A versão do Traefik a ser usada (ex: `v3.0`).
+- `portainer_version`: A versão do Portainer CE a ser usada (ex: `latest`).
+- `traefik_domain`: O domínio que você usará para o dashboard do Traefik (ex: `traefik.seusite.com`).
+- `portainer_domain`: O domínio que você usará para a interface do Portainer (ex: `portainer.seusite.com`).
+- `letsencrypt_email`: Seu endereço de e-mail, usado pela Let's Encrypt para notificações sobre seus certificados.
 
-### 1. Clone o Repositório
-Clone este projeto para a sua máquina local:
-```bash
-git clone <URL_DO_REPOSITORIO>
-cd <NOME_DO_REPOSITORIO>
-```
+### Passo 2: Configurar o DNS
 
-### 2. Configure o Inventário
-Edite o arquivo `inventory.ini` para corresponder ao seu ambiente.
+Após definir seus domínios no `inventory.ini`, você **deve** acessar o painel de controle do seu provedor de DNS e criar registros do tipo `A` apontando ambos os domínios (`traefik_domain` e `portainer_domain`) para o endereço IP do seu servidor.
 
-**Exemplo de configuração com senha:**
-```ini
-[servers]
-meu_servidor ansible_host=SEU_IP_OU_DOMINIO ansible_user=seu_usuario ansible_ssh_pass=sua_senha
-```
+O Traefik não conseguirá gerar os certificados SSL se o DNS não estiver propagado corretamente.
 
-**Exemplo com chave SSH (recomendado):**
-```ini
-[servers]
-meu_servidor ansible_host=SEU_IP_OU_DOMINIO ansible_user=seu_usuario ansible_ssh_private_key_file=~/.ssh/sua_chave_privada
-```
+---
 
-Substitua `SEU_IP_OU_DOMINIO`, `seu_usuario`, `sua_senha` e o caminho para a sua chave SSH.
+## Como Executar
 
-### 3. Personalize as Variáveis
-No final do arquivo `inventory.ini`, na seção `[servers:vars]`, você pode personalizar as variáveis do projeto:
-```ini
-[servers:vars]
-# Usuário que será criado para deploy
-deploy_user=deploy
+1.  Certifique-se de que o Ansible está instalado na sua máquina local.
+2.  Preencha as variáveis no arquivo `inventory.ini` conforme descrito acima.
+3.  Execute o playbook a partir do seu terminal:
 
-# Domínios para os serviços (configure seu DNS adequadamente)
-traefik_domain=traefik.seu-domino.com
-portainer_domain=portainer.seu-domino.com
+    ```bash
+    ansible-playbook -i inventory.ini playbook.yml
+    ```
 
-# Email para os certificados Let's Encrypt
-letsencrypt_email=seu-email@seu-domino.com
-```
+---
 
-### 4. Execute o Playbook
-Execute o seguinte comando no seu terminal:
-```bash
-ansible-playbook -i inventory.ini playbook.yml
-```
-O Ansible se conectará ao seu servidor e executará todas as tarefas definidas.
+## Pós-Instalação: Primeiros Passos
 
-**Comandos úteis:**
-- **Modo "Dry Run"** (verifica o que seria feito sem executar as mudanças):
-  ```bash
-  ansible-playbook -i inventory.ini playbook.yml --check
-  ```
-- **Modo Verboso** (mostra mais detalhes da execução):
-  ```bash
-  ansible-playbook -i inventory.ini playbook.yml -v
-  ```
+### 1. Configuração Inicial do Portainer
 
-## ✅ Verificação Pós-instalação
+O playbook implanta o Portainer, mas a criação do usuário administrador é um passo manual:
 
-Após a conclusão do playbook, você pode se conectar ao servidor (usando o `deploy_user` criado) e verificar se tudo está funcionando:
+1.  Acesse a URL do Portainer que você configurou (ex: `https://portainer.seusite.com`).
+2.  **Tela 1 - Criar Usuário:** Crie sua conta de administrador.
+3.  **Tela 2 - Assistente de Ambiente:** Após o login, você verá o "Environment Wizard". Ele deve detectar automaticamente seu ambiente Docker Swarm. Apenas clique no botão **"Get Started"** para finalizar a configuração.
 
-- **Versão do Docker**:
-  ```bash
-  docker --version
-  ```
-- **Status do Docker Swarm**:
-  ```bash
-  docker node ls
-  ```
-- **Serviços em execução (Stacks)**:
-  ```bash
-  docker stack ls
-  ```
-- **Status do Firewall**:
-  ```bash
-  sudo ufw status
-  ```
-- **Status do Fail2Ban**:
-  ```bash
-  sudo fail2ban-client status sshd
-  ```
+> **Nota:** Se por acaso você se deparar com uma tela de "timed out for security purposes", significa que a janela de 5 minutos para a configuração inicial expirou. Para resolver, execute o comando `docker service update --force portainer_portainer` no seu servidor e tente acessar a URL novamente.
 
-## 🌐 Acesso aos Serviços
+### 2. Gerenciamento do `acme.json` (Certificados Let's Encrypt)
 
-Para acessar as interfaces web do Traefik e do Portainer, você precisa apontar os domínios configurados (`traefik_domain` e `portainer_domain`) para o IP do seu servidor no seu provedor de DNS.
+O Traefik armazena seus certificados SSL em um arquivo no servidor.
 
-- **Dashboard do Traefik**: `https://traefik.seu-domino.com`
-- **Dashboard do Portainer**: `https://portainer.seu-domino.com`
+-   **Localização:** `/opt/traefik/acme/acme.json`
 
-Na primeira vez que acessar o Portainer, você precisará criar um usuário administrador.
+Este arquivo é **CRÍTICO**. Se você o perder, perderá seus certificados SSL e poderá ser bloqueado temporariamente pela Let's Encrypt por excesso de solicitações.
 
-## ⚠️ Nota de Segurança
+**Recomendação:** Faça backup deste arquivo regularmente. Se for migrar o servidor, este é o arquivo que você precisa levar junto para manter seus certificados.
 
-Este playbook aplica uma série de configurações de segurança robustas. No entanto, segurança é um processo contínuo. **É altamente recomendável que você revise todas as configurações** e as ajuste de acordo com as necessidades específicas do seu ambiente. Desabilite a autenticação por senha no SSH assim que tiver configurado o acesso por chave para o `deploy_user`.
+---
 
-## 📄 Licença
+## Verificação e Solução de Problemas
 
-Este projeto é de código aberto. Sinta-se à vontade para usá-lo e modificá-lo. 
+Para verificar se os serviços estão rodando corretamente, conecte-se ao seu servidor via SSH e use os seguintes comandos:
+
+-   **Verificar todos os serviços do stack:**
+    -   `docker stack ps traefik`
+    -   `docker stack ps portainer`
+-   **Ver logs do Traefik:**
+    -   `docker service logs traefik_traefik`
+-   **Ver logs do Portainer:**
+    -   `docker service logs portainer_portainer` 
